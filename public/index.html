@@ -5,65 +5,68 @@
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>LeetCode Class → Runnable C++</title>
   <style>
-    body{margin:0;background:#0f172a;color:#e5e7eb;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-    header{padding:20px;text-align:center;border-bottom:1px solid #1f2937;background:#0b1220}
-    .wrap{max-width:1100px;margin:24px auto;padding:0 16px}
+    :root{
+      --bg:#0b0f14; --panel:#0e141b; --ink:#e6f6ff; --muted:#6aa9c7; --accent:#06b6d4; --accent2:#0891b2;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans)}
+    header{padding:24px 16px;text-align:center;border-bottom:1px solid #0f1a22;background:#070b0f}
+    header h1{margin:0;font-size:20px;letter-spacing:.3px}
+    header .sub{color:var(--muted);margin-top:6px;font-size:13px}
+    .wrap{max-width:1100px;margin:20px auto;padding:0 16px}
     .grid{display:grid;gap:16px;grid-template-columns:1fr}
     @media(min-width:980px){.grid{grid-template-columns:1fr 1fr}}
-    .card{background:#111827;border:1px solid #1f2937;border-radius:14px;padding:16px}
-    textarea,pre,select{width:100%;background:#0b1220;color:#e5e7eb;border:1px solid #223047;border-radius:10px;padding:10px;font-family:ui-monospace,Consolas,Menlo,monospace;font-size:13px}
+    .card{background:var(--panel);border:1px solid #0f1a22;border-radius:16px;padding:16px;box-shadow:0 0 0 1px rgba(6,182,212,.05) inset}
+    .card h3{margin:0 0 10px;font-size:16px;color:#bff0ff}
+    textarea,pre{width:100%;background:#071018;color:var(--ink);border:1px solid #112433;border-radius:12px;padding:12px 12px;font-family:var(--mono);font-size:13px}
     textarea{min-height:320px}
     pre{min-height:320px;overflow:auto}
     .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-    .btn{background:#1f2937;color:#e5e7eb;border:1px solid #2b3b56;border-radius:10px;padding:10px 14px;cursor:pointer;font-weight:600}
-    .btn:hover{border-color:#3e5a86}
-    .primary{background:linear-gradient(180deg,#2563eb,#1d4ed8);border:none}
-    .ok{background:linear-gradient(180deg,#10b981,#059669);border:none}
-    .warn{background:linear-gradient(180deg,#f59e0b,#d97706);border:none}
-    .muted{color:#9ca3af;font-size:12px}
-    code.badge{display:inline-block;padding:2px 8px;border-radius:999px;background:#0b1220;border:1px solid #2b3b56;color:#9cc0ff}
+    .btn{background:#0a1720;color:var(--ink);border:1px solid #103042;border-radius:12px;padding:10px 14px;cursor:pointer;font-weight:600}
+    .btn:hover{border-color:#14546f}
+    .primary{background:linear-gradient(180deg,var(--accent),var(--accent2));border:none}
+    .ok{border-color:#0aaec9}
+    .warn{border-color:#0aaec9}
+    .muted{color:var(--muted);font-size:12px}
+    .switch{display:flex;align-items:center;gap:6px}
+    .switch input{accent-color:var(--accent)}
+    code.badge{display:inline-block;padding:2px 8px;border-radius:999px;background:#071018;border:1px solid #103042;color:#8be9ff}
   </style>
 </head>
 <body>
 <header>
-  <h2>LeetCode Class → Runnable C++ (with <code>main()</code>)</h2>
-  <div class="muted">Paste your <code>class Solution { ... }</code>. Choose I/O if needed. Generate runnable file.</div>
+  <h1>LeetCode Class → Runnable C++ (with <code>main()</code>)</h1>
+  <div class="sub">Paste your <code>class Solution { ... }</code>. Generate a clean, runnable file that reads input and prints output.</div>
 </header>
 
 <div class="wrap">
   <div class="grid">
 
     <div class="card">
-      <h3>1) Paste your class</h3>
+      <h3>Paste your class</h3>
       <textarea id="code" placeholder="Paste your C++ class Solution {...} here"></textarea>
-      <div class="row" style="margin-top:8px">
-        <button id="example" class="btn">Load Example</button>
+      <div class="row" style="margin-top:10px">
+        <label class="switch">
+          <input type="checkbox" id="preferBits">
+          <span>Prefer <code>&lt;bits/stdc++.h&gt;</code></span>
+        </label>
       </div>
     </div>
 
     <div class="card">
-      <h3>2) Options</h3>
-      <div class="row">
-        <label>I/O Template:</label>
-        <select id="tpl">
-          <option value="auto">Auto</option>
-          <option value="matrixInt">matrix&lt;int&gt; (m n + grid)</option>
-          <option value="vecInt">vector&lt;int&gt; (n + n ints)</option>
-          <option value="singleInt">int</option>
-          <option value="singleDouble">double</option>
-          <option value="singleString">string</option>
-          <option value="singleLineString">string (full line)</option>
-          <option value="bool01">bool (0/1)</option>
-        </select>
+      <h3>Generate</h3>
+      <div class="row" style="margin-bottom:8px">
         <button id="gen" class="btn primary">Generate</button>
         <button id="copy" class="btn ok">Copy</button>
         <button id="download" class="btn warn">Download</button>
       </div>
-      <div class="muted" style="margin-top:6px">Detected signature: <code id="sig" class="badge">—</code></div>
+      <div class="muted">Detected signature: <code id="sig" class="badge">—</code></div>
     </div>
 
     <div class="card" style="grid-column:1/-1">
-      <h3>3) Generated C++</h3>
+      <h3>Generated C++</h3>
       <pre id="out">// click Generate</pre>
     </div>
 
@@ -72,44 +75,10 @@
 
 <script>
 const API = "/api/generate";
-
 const codeEl = document.getElementById('code');
 const outEl  = document.getElementById('out');
 const sigEl  = document.getElementById('sig');
-const tplEl  = document.getElementById('tpl');
-
-document.getElementById('example').onclick = () => {
-  codeEl.value = `class Solution {
-private:
-    void dfs(vector<vector<int>>& heights, int r, int c, vector<vector<bool>>& visited){
-        int dir[4][2] = {{0,-1},{0,1},{-1,0},{1,0}};
-        int m=heights.size();
-        int n=heights[0].size();
-        if(visited[r][c]) return;
-        visited[r][c]=true;
-        for(auto& it:dir){
-            int nr=r+it[0];
-            int nc=c+it[1];
-            if(nr<0 || nr>=m || nc<0 || nc>=n) continue;
-            if(heights[nr][nc]>=heights[r][c]) dfs(heights, nr, nc, visited);
-        }
-    }
-public:
-    vector<vector<int>> pacificAtlantic(vector<vector<int>>& heights) {
-        if(heights.empty()) return {};
-        vector<vector<int>> res;
-        int m=heights.size(), n=heights[0].size();
-        vector<vector<bool>> pacific(m, vector<bool>(n, false));
-        vector<vector<bool>> atlantic(m, vector<bool>(n, false));
-        for(int i=0;i<m;i++) dfs(heights, i, 0, pacific);
-        for(int j=0;j<n;j++) dfs(heights, 0, j, pacific);
-        for(int i=0;i<m;i++) dfs(heights, i, n-1, atlantic);
-        for(int j=0;j<n;j++) dfs(heights, m-1, j, atlantic);
-        for(int i=0;i<m;i++) for(int j=0;j<n;j++) if(pacific[i][j] && atlantic[i][j]) res.push_back({i,j});
-        return res;
-    }
-};`;
-};
+const preferBitsEl = document.getElementById('preferBits');
 
 document.getElementById('gen').onclick = async () => {
   outEl.textContent = "Generating...";
@@ -118,7 +87,7 @@ document.getElementById('gen').onclick = async () => {
     const res = await fetch(API, {
       method: "POST",
       headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({ code: codeEl.value, ioTemplate: tplEl.value })
+      body: JSON.stringify({ code: codeEl.value, preferBits: preferBitsEl.checked })
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error);
@@ -132,7 +101,6 @@ document.getElementById('gen').onclick = async () => {
 document.getElementById('copy').onclick = async () => {
   try { await navigator.clipboard.writeText(outEl.textContent); } catch {}
 };
-
 document.getElementById('download').onclick = () => {
   const blob = new Blob([outEl.textContent], {type:'text/plain'});
   const a = document.createElement('a');

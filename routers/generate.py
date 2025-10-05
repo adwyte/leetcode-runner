@@ -5,6 +5,8 @@ from typing import List, Dict, Any, Optional
 
 router = APIRouter()
 
+# ---------- utils ----------
+
 def normalize_ws(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
@@ -20,283 +22,252 @@ def split_top_level(s: str, delim: str) -> List[str]:
     if buf: out.append("".join(buf))
     return out
 
-def detect_signature(code: str) -> Optional[Dict[str, Any]]:
-    # 1) Extract class body
-    cls = re.search(r"class\s+Solution\s*{([\s\S]*?)}\s*;?", code, re.M)
-    if not cls:
+# ---------- robust signature detection (public-only) ----------
+
+def _strip_comments(src: str) -> str:
+    # Remove /* ... */ and // ... while preserving newlines (positions remain roughly aligned)
+    src = re.sub(r"/\*[\s\S]*?\*/", "", src)
+    src = re.sub(r"//[^\n\r]*", "", src)
+    return src
+
+def _extract_class_body(src: str) -> Optional[str]:
+    """
+    Return the exact text inside the outermost braces of `class Solution { ... }`.
+    Uses brace counting (not regex) so nested function braces don't break it.
+    """
+    m = re.search(r"\bclass\s+Solution\b", src)
+    if not m:
         return None
-    body = cls.group(1)
+    i = m.end()
 
-    # 2) Try inside first public: block
-    blocks = re.split(r"public\s*:", body, maxsplit=1)
-    search_space = [blocks[1]] if len(blocks) == 2 else []
+    # find first '{' after 'class Solution'
+    brace_open = src.find("{", i)
+    if brace_open == -1:
+        return None
 
-    # 3) Fallback: search whole body as well
-    search_space.append(body)
+    depth = 1
+    j = brace_open + 1
+    while j < len(src) and depth > 0:
+        ch = src[j]
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+        j += 1
 
-    sig_regex = re.compile(
+    if depth != 0:
+        return None  # unbalanced braces
+
+    # body is the content between the outermost class braces
+    return src[brace_open + 1 : j - 1]
+
+def detect_signature(code: str) -> Optional[Dict[str, Any]]:
+    """
+    Find the first function DEFINITION inside any public: span of class Solution.
+    If there is no public: span at all, fall back to scanning the whole class body.
+    """
+    code_nc = _strip_comments(code)
+    body = _extract_class_body(code_nc)
+    if body is None:
+        return None
+
+    # Build access spans: [(label, start, end), ...]
+    labels = list(re.finditer(r"(public|private|protected)\s*:", body))
+    public_spans: list[tuple[int,int]] = []
+
+    if labels:
+        for i, m in enumerate(labels):
+            label = m.group(1)
+            start = m.end()
+            end = labels[i+1].start() if i+1 < len(labels) else len(body)
+            if label == "public":
+                public_spans.append((start, end))
+        # If there are access labels but no public span, do NOT scan private/protected.
+        if not public_spans:
+            return None
+        search_spaces = [body[s:e] for (s, e) in public_spans]
+    else:
+        # No explicit access labels → treat the whole class body as a single public-ish space.
+        search_spaces = [body]
+
+    # Header regex; we’ll additionally require the next non-space char after header is '{'
+    header_re = re.compile(
         r"([A-Za-z_:\s<>\[\],&*\d]+?)\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:const\s*)?(?:noexcept\s*)?",
         re.DOTALL
     )
 
-    for space in search_space:
-        m = sig_regex.search(space)
-        if not m:
-            continue
+    def next_non_space(text: str, idx: int) -> str:
+        m = re.search(r"\S", text[idx:])
+        return text[idx + m.start()] if m else ""
 
-        ret = normalize_ws(m.group(1))
-        name = m.group(2)
-        if name == "Solution":     # skip constructor
-            # try next match in same space
-            m2 = sig_regex.search(space, m.end())
-            if not m2:
+    def scan(space: str) -> Optional[Dict[str, Any]]:
+        for m in header_re.finditer(space):
+            ret = normalize_ws(m.group(1))
+            name = m.group(2)
+            if name == "Solution":  # skip constructor
                 continue
-            ret = normalize_ws(m2.group(1))
-            name = m2.group(2)
-            if name == "Solution":
+            # Definition (not just declaration): must be followed by '{'
+            nxt = next_non_space(space, m.end())
+            if nxt != "{":
                 continue
 
-        params_raw = m.group(3).strip()
-        params: List[Dict[str, str]] = []
-        if params_raw:
-            for p in split_top_level(params_raw, ','):
-                seg = normalize_ws(re.sub(r"^\s*const\s+", "", p.strip()))
-                if not seg:
-                    continue
-                last_space = seg.rfind(' ')
-                if last_space == -1:
-                    ptype = seg.replace('&', '').replace('const', '').strip()
-                    pname = ''
-                else:
-                    ptype = seg[:last_space].replace('&', '').replace('const', '').strip()
-                    pname = seg[last_space+1:].strip()
-                params.append({"type": ptype, "name": pname})
+            params_raw = m.group(3).strip()
+            params: List[Dict[str, str]] = []
+            if params_raw:
+                for p in split_top_level(params_raw, ','):
+                    seg = normalize_ws(re.sub(r"^\s*const\s+", "", p.strip()))
+                    if not seg:
+                        continue
+                    last_space = seg.rfind(' ')
+                    if last_space == -1:
+                        ptype = seg.replace('&','').replace('const','').strip()
+                        pname = ''
+                    else:
+                        ptype = seg[:last_space].replace('&','').replace('const','').strip()
+                        pname = seg[last_space+1:].strip()
+                    params.append({"type": ptype, "name": pname})
+            return {"ret": ret, "name": name, "params": params}
+        return None
 
-        return {"ret": ret, "name": name, "params": params}
-
+    # Prefer public spans or whole body if no labels existed
+    for sp in search_spaces:
+        hit = scan(sp)
+        if hit:
+            return hit
     return None
 
+# ---------- includes ----------
 
-INCLUDES = """#include <iostream>
-#include <vector>
-#include <string>
-#include <queue>
-#include <stack>
-#include <algorithm>
-#include <limits>
-#include <unordered_map>
-#include <unordered_set>
-#include <map>
-#include <set>
-#include <cmath>
-#include <cctype>
-#include <numeric>
-#include <sstream>
-using namespace std;
-"""
+def includes_block(prefer_bits: bool, needs_string: bool) -> str:
+    if prefer_bits:
+        return "#include <bits/stdc++.h>\nusing namespace std;\n"
+    incs = ["#include <iostream>", "#include <vector>"]
+    if needs_string:
+        incs.append("#include <string>")
+    return "\n".join(incs) + "\nusing namespace std;\n"
 
-READERS = r"""
-// --- Input readers ---
-vector<int> readVectorInt(){
-    int n; if(!(cin>>n)) n=0;
-    vector<int> v(n);
-    for(int i=0;i<n;++i) cin>>v[i];
-    return v;
-}
-vector<vector<int>> readMatrixInt(){
-    int m,n; cin>>m>>n;
-    vector<vector<int>> a(m, vector<int>(n));
-    for(int i=0;i<m;++i) for(int j=0;j<n;++j) cin>>a[i][j];
-    return a;
-}
-"""
+# ---------- IO generation ----------
 
-PRINTERS = r"""
-// --- Printers (JSON-like) ---
-template <typename T> void printScalar(const T& x){ cout << x; }
-void printScalar(const bool& b){ cout << (b ? "true" : "false"); }
-void printScalar(const string& s){ cout << '"' << s << '"'; }
-
-template <typename T> void printAny(const T& x){ printScalar(x); }
-template <typename T>
-void printAny(const vector<T>& v){
-    cout << "[";
-    for(size_t i=0;i<v.size();++i){
-        printAny(v[i]);
-        if(i+1<v.size()) cout << ",";
-    }
-    cout << "]";
-}
-"""
-
-def param_decl(p: Dict[str, str]) -> str:
+def gen_input_for_param(p: Dict[str, str]) -> str:
     t = re.sub(r"\s+", "", p["type"])
     name = p["name"] or "arg"
     if t in ("vector<vector<int>>", "vector<vector<int> >"):
-        return f"auto {name} = readMatrixInt();"
+        return f"""\
+int m, n; cin >> m >> n;
+vector<vector<int>> {name}(m, vector<int>(n));
+for (int i = 0; i < m; ++i) {{
+    for (int j = 0; j < n; ++j) {{
+        cin >> {name}[i][j];
+    }}
+}}"""
     if t == "vector<int>":
-        return f"auto {name} = readVectorInt();"
+        return f"""\
+int n; cin >> n;
+vector<int> {name}(n);
+for (int i = 0; i < n; ++i) cin >> {name}[i];"""
     if t == "int":
         return f"int {name}; cin >> {name};"
     if t == "double":
         return f"double {name}; cin >> {name};"
     if t == "bool":
-        return f"int __b; cin >> __b; bool {name} = (__b!=0);"
+        return f"int __b; cin >> __b; bool {name} = (__b != 0);"
     if t == "string":
         return f"string {name}; cin >> {name};"
-    if re.search(r"vector\s*<\s*vector\s*<\s*int\s*>\s*>\s*", p["type"]):
-        return f"auto {name} = readMatrixInt();"
-    if re.search(r"vector\s*<\s*int\s*>\s*", p["type"]):
-        return f"auto {name} = readVectorInt();"
     return f"/* TODO: unsupported param type: {p['type']} {name} */"
 
-def arg_list(params: List[Dict[str,str]]) -> str:
+def join_args(params: List[Dict[str, str]]) -> str:
     return ", ".join([(p["name"] or "").strip() for p in params])
 
-def main_from_template(func_name: str, tpl: str) -> str:
-    if tpl == "matrixInt":
-        return f"""
-int main(){{
-    ios::sync_with_stdio(false); cin.tie(nullptr);
-    auto a = readMatrixInt();
-    Solution sol;
-    auto out = sol.{func_name}(a);
-    printAny(out); cout << "\\n";
-    return 0;
+
+def gen_output_for_ret(ret_type: str, out_var: str="out") -> str:
+    rt = re.sub(r"\s+", "", ret_type)
+    if rt.startswith("vector<vector<"):
+        return f"""\
+for (const auto& row : {out_var}) {{
+    if (row.size() == 2) {{
+        cout << row[0] << " " << row[1] << "\\n";
+    }} else {{
+        for (size_t j = 0; j < row.size(); ++j) {{
+            if (j) cout << ' ';
+            cout << row[j];
+        }}
+        cout << "\\n";
+    }}
 }}"""
-    if tpl == "vecInt":
-        return f"""
-int main(){{
-    ios::sync_with_stdio(false); cin.tie(nullptr);
-    auto v = readVectorInt();
-    Solution sol;
-    auto out = sol.{func_name}(v);
-    printAny(out); cout << "\\n";
-    return 0;
-}}"""
-    if tpl == "singleInt":
-        return f"""
-int main(){{
-    ios::sync_with_stdio(false); cin.tie(nullptr);
-    int x; cin >> x;
-    Solution sol;
-    auto out = sol.{func_name}(x);
-    printAny(out); cout << "\\n";
-    return 0;
-}}"""
-    if tpl == "singleDouble":
-        return f"""
-int main(){{
-    ios::sync_with_stdio(false); cin.tie(nullptr);
-    double x; cin >> x;
-    Solution sol;
-    auto out = sol.{func_name}(x);
-    printAny(out); cout << "\\n";
-    return 0;
-}}"""
-    if tpl == "singleString":
-        return f"""
-int main(){{
-    ios::sync_with_stdio(false); cin.tie(nullptr);
-    string s; cin >> s;
-    Solution sol;
-    auto out = sol.{func_name}(s);
-    printAny(out); cout << "\\n";
-    return 0;
-}}"""
-    if tpl == "singleLineString":
-        return f"""
-int main(){{
-    ios::sync_with_stdio(false); cin.tie(nullptr);
-    string s; getline(cin, s); if(s.empty()) getline(cin, s);
-    Solution sol;
-    auto out = sol.{func_name}(s);
-    printAny(out); cout << "\\n";
-    return 0;
-}}"""
-    if tpl == "bool01":
-        return f"""
-int main(){{
-    ios::sync_with_stdio(false); cin.tie(nullptr);
-    int b; cin >> b; bool x = (b!=0);
-    Solution sol;
-    auto out = sol.{func_name}(x);
-    printAny(out); cout << "\\n";
-    return 0;
-}}"""
+    if rt.startswith("vector<"):
+        return f"""\
+for (size_t i = 0; i < {out_var}.size(); ++i) {{
+    if (i) cout << ' ';
+    cout << {out_var}[i];
+}}
+cout << "\\n";"""
+    return f'cout << {out_var} << "\\n";'
+
+
+def indent_block(s: str, pad: str = "    ") -> str:
+    lines = s.splitlines()
+    return "\n".join((pad + ln) if ln.strip() != "" else ln for ln in lines)
+
+
+def build_main(sig: Dict[str, Any]) -> str:
+    input_blocks = [gen_input_for_param(p) for p in sig["params"]]
+    decls = "\n\n".join(indent_block(b) for b in input_blocks) if input_blocks else "    /* no params */"
+    args = join_args(sig["params"])
+    out_print = indent_block(gen_output_for_ret(sig["ret"], "out"))
     return f"""
 int main(){{
-    ios::sync_with_stdio(false); cin.tie(nullptr);
-    auto a = readMatrixInt();
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+{decls}
+
     Solution sol;
-    auto out = sol.{func_name}(a);
-    printAny(out); cout << "\\n";
+    auto out = sol.{sig['name']}({args});
+{out_print}
     return 0;
 }}"""
 
-def build_code(user_code: str, io_template: str) -> Dict[str, Any]:
-    sig = detect_signature(user_code or "")
-    template_used = io_template
-
-    if not sig:
-        code = f"""{INCLUDES}
-{READERS}
-{PRINTERS}
-
-{user_code.strip()}
-
-{main_from_template("solve", "matrixInt")}
-"""
-        return {"generated_code": code.strip(), "signature": None, "template_used": "matrixInt"}
-
-    func = sig["name"]; params = sig["params"]
-
-    if io_template == "auto":
-        tpl = "matrixInt"
-        if params:
-            t0 = re.sub(r"\s+", "", params[0]["type"])
-            if t0 in ("vector<vector<int>>", "vector<vector<int> >"): tpl = "matrixInt"
-            elif t0 == "vector<int>": tpl = "vecInt"
-            elif t0 == "int": tpl = "singleInt"
-            elif t0 == "double": tpl = "singleDouble"
-            elif t0 == "string": tpl = "singleString"
-            elif t0 == "bool": tpl = "bool01"
-        template_used = tpl
-
-    if template_used != "auto":
-        main_block = main_from_template(func, template_used)
-    else:
-        decls = "\n    ".join(param_decl(p) for p in params) or "/* no params */"
-        args = arg_list(params)
-        main_block = f"""
-int main(){{
-    ios::sync_with_stdio(false); cin.tie(nullptr);
-
-    {decls}
-
-    Solution sol;
-    auto out = sol.{func}({args});
-    printAny(out); cout << "\\n";
-    return 0;
-}}"""
-
-    full = f"""{INCLUDES}
-{READERS}
-{PRINTERS}
-
-{user_code.strip()}
-
-{main_block}
-"""
-    pretty_sig = f"{sig['ret']} {sig['name']}(" + ", ".join(f"{p['type']} {p['name']}".strip() for p in params) + ")"
-    return {"generated_code": full.strip(), "signature": pretty_sig, "template_used": template_used}
+# ---------- route ----------
 
 @router.post("/generate")
 async def generate(request: Request):
     data = await request.json()
     code = data.get("code", "")
-    io_template = data.get("ioTemplate", "auto")
-    try:
-        return JSONResponse(build_code(code, io_template))
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=400)
+    prefer_bits = bool(data.get("preferBits", False))
+
+    sig = detect_signature(code)
+    if not sig:
+        inc = includes_block(prefer_bits, needs_string=("string" in code))
+        generated = f"""{inc}
+
+{code.strip()}
+
+// Signature not detected. Please edit main() accordingly.
+int main(){{
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    // Example for a matrix input:
+    int m, n; cin >> m >> n;
+    vector<vector<int>> a(m, vector<int>(n));
+    for (int i = 0; i < m; ++i) for (int j = 0; j < n; ++j) cin >> a[i][j];
+
+    Solution sol;
+    // auto out = sol.YOUR_METHOD(a);
+    // TODO: print output as needed
+    return 0;
+}}
+"""
+        return JSONResponse({"generated_code": generated.strip(), "signature": None})
+
+    needs_string = ("string" in code) or any(re.sub(r"\s+","", p["type"]) == "string" for p in sig["params"])
+    inc = includes_block(prefer_bits, needs_string)
+    main_block = build_main(sig)
+
+    final = f"""{inc}
+{code.strip()}
+
+{main_block}
+"""
+    pretty = f"{sig['ret']} {sig['name']}(" + ", ".join(f"{p['type']} {p['name']}".strip() for p in sig["params"]) + ")"
+    return JSONResponse({"generated_code": final.strip(), "signature": pretty})

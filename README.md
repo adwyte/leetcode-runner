@@ -2,6 +2,8 @@
 
 Paste a `class Solution { ... }` and get a full `main.cpp` with input parsing & JSON-like output.
 
+Live at: https://leetcode-runner.vercel.app
+
 ## Run locally
 
 ```bash
